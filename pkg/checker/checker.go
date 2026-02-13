@@ -12,67 +12,86 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-const (
-	TargetURL = "https://www.google.com"
-	Timeout   = 10 * time.Second
-)
-
-func Check(p models.Proxy) bool {
+// Check validates a proxy against a target URL.
+// Returns success status and any error encountered.
+func Check(p models.Proxy, targetURL string, timeout time.Duration) (bool, error) {
 	var client *http.Client
+
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	// Default to Google if empty, but caller should provide it
+	if targetURL == "" {
+		targetURL = "https://www.google.com"
+	}
 
 	switch p.Protocol {
 	case models.HTTP:
 		proxyURL, err := url.Parse(fmt.Sprintf("http://%s:%s", p.IP, p.Port))
 		if err != nil {
-			return false
+			return false, fmt.Errorf("url parse error: %w", err)
 		}
+
+		transport := &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+			DialContext: (&net.Dialer{
+				Timeout:   timeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			DisableKeepAlives: true,
+		}
+
 		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-				DialContext: (&net.Dialer{
-					Timeout:   Timeout,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-			Timeout: Timeout,
+			Transport: transport,
+			Timeout:   timeout,
 		}
 
 	case models.SOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%s", p.IP, p.Port), nil, proxy.Direct)
 		if err != nil {
-			return false
+			return false, fmt.Errorf("socks5 dialer error: %w", err)
 		}
+
 		client = &http.Client{
 			Transport: &http.Transport{
-				Dial: dialer.Dial,
+				Dial:              dialer.Dial,
+				DisableKeepAlives: true,
 			},
-			Timeout: Timeout,
+			Timeout: timeout,
 		}
 
 	case models.SOCKS4:
 		dialer := &SOCKS4Dialer{
 			ProxyIP:   p.IP,
 			ProxyPort: p.Port,
+			Timeout:   timeout,
 		}
+
 		client = &http.Client{
 			Transport: &http.Transport{
-				Dial: dialer.Dial,
+				Dial:              dialer.Dial,
+				DisableKeepAlives: true,
 			},
-			Timeout: Timeout,
+			Timeout: timeout,
 		}
 
 	default:
-		return false
+		return false, fmt.Errorf("unknown protocol: %s", p.Protocol)
 	}
 
 	if client == nil {
-		return false
+		return false, fmt.Errorf("failed to create client")
 	}
 
-	resp, err := client.Get(TargetURL)
+	resp, err := client.Get(targetURL)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+
+	if resp.StatusCode == http.StatusOK {
+		return true, nil
+	}
+
+	return false, fmt.Errorf("status code: %d", resp.StatusCode)
 }

@@ -6,18 +6,23 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 )
 
 type SOCKS4Dialer struct {
 	ProxyIP   string
 	ProxyPort string
+	Timeout   time.Duration
 }
 
 func (d *SOCKS4Dialer) Dial(network, addr string) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", d.ProxyIP, d.ProxyPort), Timeout)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", d.ProxyIP, d.ProxyPort), d.Timeout)
 	if err != nil {
 		return nil, err
 	}
+
+	// Set deadline for the handshake
+	conn.SetDeadline(time.Now().Add(d.Timeout))
 
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -72,5 +77,7 @@ func (d *SOCKS4Dialer) Dial(network, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("SOCKS4 request failed with code: %d", resp[1])
 	}
 
+	// Clear deadline for subsequent use (or let client set it)
+	conn.SetDeadline(time.Time{})
 	return conn, nil
 }

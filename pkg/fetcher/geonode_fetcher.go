@@ -26,29 +26,44 @@ type geonodeResponse struct {
 	Limit int `json:"limit"`
 }
 
-func (f *GeonodeFetcher) Fetch() ([]models.Proxy, error) {
-	var allProxies []models.Proxy
+func (f *GeonodeFetcher) Fetch(logger Logger, onProxies ProxyCallback) error {
 	client := http.Client{
 		Timeout: 30 * time.Second,
 	}
 
+	if logger != nil {
+		logger("Starting fetch from Geonode...")
+	}
+
+	totalFetched := 0
+
 	for page := 1; page <= f.Pages; page++ {
 		url := fmt.Sprintf("%s&page=%d", f.BaseURL, page)
+		if logger != nil {
+			logger(fmt.Sprintf("Fetching Geonode page %d...", page))
+		}
+
 		resp, err := client.Get(url)
 		if err != nil {
-			fmt.Printf("Error fetching Geonode page %d: %v\n", page, err)
+			if logger != nil {
+				logger(fmt.Sprintf("Error fetching Geonode page %d: %v", page, err))
+			}
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("Geonode page %d returned status: %s\n", page, resp.Status)
+			if logger != nil {
+				logger(fmt.Sprintf("Geonode page %d returned status: %s", page, resp.Status))
+			}
 			resp.Body.Close()
 			continue
 		}
 
 		var result geonodeResponse
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			fmt.Printf("Error decoding Geonode page %d: %v\n", page, err)
+			if logger != nil {
+				logger(fmt.Sprintf("Error decoding Geonode page %d: %v", page, err))
+			}
 			resp.Body.Close()
 			continue
 		}
@@ -58,8 +73,8 @@ func (f *GeonodeFetcher) Fetch() ([]models.Proxy, error) {
 			break
 		}
 
+		var pageProxies []models.Proxy
 		for _, item := range result.Data {
-			// Map protocols
 			for _, p := range item.Protocols {
 				var protocol models.Protocol
 				protocolStr := p
@@ -74,7 +89,7 @@ func (f *GeonodeFetcher) Fetch() ([]models.Proxy, error) {
 					continue
 				}
 
-				allProxies = append(allProxies, models.Proxy{
+				pageProxies = append(pageProxies, models.Proxy{
 					IP:       item.IP,
 					Port:     item.Port,
 					Protocol: protocol,
@@ -82,7 +97,15 @@ func (f *GeonodeFetcher) Fetch() ([]models.Proxy, error) {
 				})
 			}
 		}
+
+		if len(pageProxies) > 0 && onProxies != nil {
+			onProxies(pageProxies)
+			totalFetched += len(pageProxies)
+		}
 	}
 
-	return allProxies, nil
+	if logger != nil {
+		logger(fmt.Sprintf("Finished fetching from Geonode. Total: %d", totalFetched))
+	}
+	return nil
 }

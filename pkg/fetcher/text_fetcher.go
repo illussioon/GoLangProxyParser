@@ -1,6 +1,7 @@
 package fetcher
 
 import (
+	"fmt"
 	"strings"
 
 	"ProxyParserGO/pkg/models"
@@ -12,15 +13,25 @@ type TextFetcher struct {
 	Source   string
 }
 
-func (f *TextFetcher) Fetch() ([]models.Proxy, error) {
+func (f *TextFetcher) Fetch(logger Logger, onProxies ProxyCallback) error {
+	if logger != nil {
+		logger(fmt.Sprintf("Fetching text list from %s...", f.Source))
+	}
+
 	lines, err := fetchURL(f.URL)
 	if err != nil {
-		return nil, err
+		if logger != nil {
+			logger(fmt.Sprintf("Error fetching %s: %v", f.Source, err))
+		}
+		return err
 	}
 
 	var proxies []models.Proxy
 	for _, line := range lines {
+		// Clean line
 		line = strings.TrimSpace(line)
+
+		// Strip protocol prefix if present
 		if idx := strings.Index(line, "://"); idx != -1 {
 			line = line[idx+3:]
 		}
@@ -35,5 +46,13 @@ func (f *TextFetcher) Fetch() ([]models.Proxy, error) {
 			})
 		}
 	}
-	return proxies, nil
+
+	if len(proxies) > 0 && onProxies != nil {
+		onProxies(proxies)
+	}
+
+	if logger != nil {
+		logger(fmt.Sprintf("Fetched %d proxies from %s", len(proxies), f.Source))
+	}
+	return nil
 }
